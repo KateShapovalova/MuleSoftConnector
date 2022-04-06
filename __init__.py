@@ -24,13 +24,13 @@ chunksize = 2000
 logAnalyticsUri = os.environ.get('logAnalyticsUri')
 
 if ((logAnalyticsUri in (None, '') or str(logAnalyticsUri).isspace())):
-    logging.warning("logAnalyticsUri is None, used default value.")
+    logging.warning("logAnalyticsUri is None, used default value")
     logAnalyticsUri = 'https://' + customer_id + '.ods.opinsights.azure.com'
 
 pattern = r'https:\/\/([\w\-]+)\.ods\.opinsights\.azure.([a-zA-Z\.]+)$'
 match = re.match(pattern, str(logAnalyticsUri))
 if (not match):
-    raise Exception("MuleSoft: Invalid Log Analytics Uri.")
+    raise Exception("MuleSoft: Invalid Log Analytics Uri")
 
 
 def generate_date():
@@ -41,7 +41,7 @@ def generate_date():
     if past_time is not None:
         logging.info("The last time point is: {}".format(past_time))
     else:
-        logging.info("There is no last time point, trying to get events for last hour.")
+        logging.info("There is no last time point, trying to get events for last hour")
         past_time = (current_time - timedelta(minutes=60))
     state.post(current_time.strftime("%d.%m.%Y %H:%M:%S"))
     return past_time, current_time
@@ -84,7 +84,7 @@ def post_data(chunk):
                 "The authentication credentials are incorrect or missing. Error code: {}".format(response.status_code))
         else:
             logging.error("Something wrong. Error code: {}".format(response.status_code))
-        return None
+        return 0
     except Exception as err:
         logging.error("Something wrong. Exception error text: {}".format(err))
 
@@ -99,9 +99,16 @@ def gen_chunks_to_object(data, chunk_size=100):
     yield chunk
 
 
-def gen_chunks(data):
+def gen_chunks(data, start_time, end_time):
+    success = 0
+    failed = 0
     for chunk in gen_chunks_to_object(data, chunk_size=chunksize):
-        post_data(chunk)
+        status_code = post_data(chunk)
+        if 200 <= status_code <= 299:
+            success += len(chunk)
+        else:
+            failed += len(chunk)
+    logging.info("{} successfully added, {} failed. Period(UTC): {} - {}".format(success, failed, start_time.strftime("%d.%m.%Y %H:%M:%S"), end_time.strftime("%d.%m.%Y %H:%M:%S")))
 
 
 def main(mytimer: func.TimerRequest) -> None:
@@ -110,7 +117,6 @@ def main(mytimer: func.TimerRequest) -> None:
     logging.getLogger().setLevel(logging.INFO)
     logging.info('Starting program')
     start_time, end_time = generate_date()
-    logging.info('Data processing. Period(UTC): {} - {}'.format(start_time.strftime("%d.%m.%Y %H:%M:%S"), end_time.strftime("%d.%m.%Y %H:%M:%S")))
     start_time_millisec = start_time.timestamp() * 1000
     end_time_millisec = end_time.timestamp() * 1000
 
@@ -129,4 +135,4 @@ def main(mytimer: func.TimerRequest) -> None:
         alert["event_type"] = "alerts"
     for log in logs_json:
         log["event_type"] = "logs"
-    gen_chunks(alerts_json + logs_json)
+    gen_chunks(alerts_json + logs_json, start_time=start_time, end_time=end_time)
