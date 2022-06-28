@@ -8,7 +8,7 @@ import base64
 import logging
 import os
 from datetime import datetime, timedelta
-from .state_manager import StateManager
+from state_manager import StateManager
 import re
 import azure.functions as func
 
@@ -36,14 +36,14 @@ if (not match):
 def generate_date():
     current_time = datetime.utcnow().replace(second=0, microsecond=0) - timedelta(minutes=10)
     state = StateManager(connection_string=connection_string)
-    past_time = state.get()
-    # past_time = None
+    #past_time = state.get()
+    past_time = None
     if past_time is not None:
         logging.info("The last time point is: {}".format(past_time))
     else:
         logging.info("There is no last time point, trying to get events for last hour")
         past_time = (current_time - timedelta(minutes=60))
-    state.post(current_time.strftime("%d.%m.%Y %H:%M:%S"))
+    #state.post(current_time.strftime("%d.%m.%Y %H:%M:%S"))
     return past_time, current_time
 
 
@@ -111,28 +111,49 @@ def gen_chunks(data, start_time, end_time):
     logging.info("{} successfully added, {} failed. Period(UTC): {} - {}".format(success, failed, start_time.strftime("%d.%m.%Y %H:%M:%S"), end_time.strftime("%d.%m.%Y %H:%M:%S")))
 
 
-def main(mytimer: func.TimerRequest) -> None:
-    if mytimer.past_due:
-        logging.info('The timer is past due!')
-    logging.getLogger().setLevel(logging.INFO)
-    logging.info('Starting program')
-    start_time, end_time = generate_date()
-    start_time_millisec = start_time.timestamp() * 1000
-    end_time_millisec = end_time.timestamp() * 1000
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    logging.info('Python HTTP trigger function processed a request.')
 
-    # get alerts
-    logging.info('Collecting alerts...')
-    alerts_json = get_alerts(username=username, password=password, app_name=app_name, env_id=env_id,
-                             start_time=start_time_millisec, end_time=end_time_millisec)
+    name = req.params.get('name')
+    if not name:
+        try:
+            req_body = req.get_json()
+        except ValueError:
+            pass
+        else:
+            name = req_body.get('name')
 
-    # get logs
-    logging.info('Collecting logs...')
-    logs_json = get_logs(username=username, password=password, env_id=env_id, start_time=start_time_millisec,
-                         end_time=end_time_millisec)
+    if name:
 
-    # Send data via data collector API
-    for alert in alerts_json:
-        alert["event_type"] = "alerts"
-    for log in logs_json:
-        log["event_type"] = "logs"
-    gen_chunks(alerts_json + logs_json, start_time=start_time, end_time=end_time)
+        logging.getLogger().setLevel(logging.INFO)
+        logging.info('Starting program')
+        start_time, end_time = generate_date()
+        start_time_millisec = start_time.timestamp() * 1000
+        end_time_millisec = end_time.timestamp() * 1000
+
+        # get alerts
+        logging.info('Collecting alerts...')
+        alerts_json = get_alerts(username=username, password=password, app_name=app_name, env_id=env_id,
+                                 start_time=start_time_millisec, end_time=end_time_millisec)
+
+        # get logs
+        logging.info('Collecting logs...')
+        logs_json = get_logs(username=username, password=password, env_id=env_id, start_time=start_time_millisec,
+                             end_time=end_time_millisec)
+
+        # Send data via data collector API
+        for alert in alerts_json:
+            alert["event_type"] = "alerts"
+        for log in logs_json:
+            log["event_type"] = "logs"
+        gen_chunks(alerts_json + logs_json, start_time=start_time, end_time=end_time)
+
+        return func.HttpResponse(f"Hello {name}!")
+
+    else:
+        return func.HttpResponse(
+            "Please pass a name on the query string or in the request body",
+            status_code=400
+        )
+
+main()
